@@ -1,0 +1,8 @@
+flask
+torch
+transformers
+langchain
+sentence-transformers
+faiss-cpu
+huggingface_hub
+

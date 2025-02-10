@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库问答系统</title>
+</head>
+
+<script>
+async function askQuestion(event) {
+    event.preventDefault();  // 防止表单默认提交
+
+    const questionInput = document.getElementById('questionInput');
+    const resultDiv = document.getElementById('result');
+    const sourcesDiv = document.getElementById('sources');
+
+    const question = questionInput.value;
+
+    // 清空先前的结果
+    resultDiv.innerHTML = "";
+    sourcesDiv.innerHTML = "";
+
+    // 发送问题到后端
+    const response = await fetch('/ask', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+            'question': question
+        })
+    });
+
+    const data = await response.json();
+
+    // 显示返回的答案和来源
+    if (data.answer) {
+        resultDiv.innerHTML = `<h2>回答：</h2><p>${data.answer}</p>`;
+    } else {
+        resultDiv.innerHTML = `<h2>回答：</h2><p>没有找到相关答案。</p>`;
+    }
+
+    if (data.sources) {
+        sourcesDiv.innerHTML = "<h3>相关文档：</h3><ul>";
+        data.sources.forEach(source => {
+            sourcesDiv.innerHTML += `<li>${source}</li>`;
+        });
+        sourcesDiv.innerHTML += "</ul>";
+    }
+}
+</script>
+
+<body>
+    <h1>欢迎使用知识库问答系统</h1>
+
+    <!-- 文件上传表单 -->
+    <form action="/upload" method="POST" enctype="multipart/form-data">
+        <label for="file">上传文件:</label>
+        <input type="file" id="file" name="file" accept=".txt" required>
+        <button type="submit">上传</button>
+    </form>
+
+    <hr>
+
+    <!-- 提问表单 -->
+    <form id="ask-form" onsubmit="askQuestion(event)">
+        <label for="questionInput">请输入您的问题：</label><br>
+        <input type="text" id="questionInput" name="question" required><br><br>
+        <button type="submit">提交问题</button>
+    </form>
+
+    <hr>
+
+    <!-- 显示答案和来源 -->
+    <div id="result"></div>
+    <div id="sources"></div>
+</body>
+</html>
+

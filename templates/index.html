@@ -1,0 +1,85 @@
+<!-- 前端修改（templates/index.html） -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>知识库问答系统</title>
+    <style>
+        #answer { white-space: pre-wrap; }
+        .loading { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>知识库问答系统</h1>
+
+    <!-- 文件上传表单 -->
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".txt" required>
+        <button type="submit">上传文档</button>
+    </form>
+
+    <hr>
+
+    <!-- 提问表单 -->
+    <form onsubmit="return askQuestion(event)">
+        <input type="text" id="question" placeholder="输入问题..." required>
+        <button type="submit">提问</button>
+    </form>
+
+    <div id="answer"></div>
+    <div id="sources"></div>
+
+    <script>
+        const answerDiv = document.getElementById('answer');
+        const sourcesDiv = document.getElementById('sources');
+
+        async function askQuestion(event) {
+            event.preventDefault();
+            const question = document.getElementById('question').value;
+            answerDiv.innerHTML = '<div class="loading">思考中...</div>';
+            sourcesDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({ question })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let answer = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.replace('data: ', '');
+                            answer += data;
+                            answerDiv.innerHTML = `<div id="answer-text">${answer}</div>`;
+                        }
+                        else if (line.startsWith('event: sources')) {
+                            const sources = JSON.parse(line.replace('event: sources\ndata: ', ''));
+                            sourcesDiv.innerHTML = `
+                                <h3>参考来源：</h3>
+                                <ul>
+                                    ${sources.map(s => `<li>${s}</li>`).join('')}
+                                </ul>
+                            `;
+                        }
+                    }
+                }
+            } catch (error) {
+                answerDiv.innerHTML = `<div class="error">请求失败：${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

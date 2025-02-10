@@ -1,0 +1,118 @@
+import os
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from langchain.document_loaders import DirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
+from langchain.document_loaders import DirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.llms import LlamaCpp
+
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+
+# 设置上传文件路径和FAISS索引目录
+UPLOAD_FOLDER = './uploaded_files'
+FAISS_INDEX_DIR = './faiss_index'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# 初始化LLM
+model_path = "/home/ubuntu/deploy/mistral-q4_0.gguf"
+llm = LlamaCpp(
+    model_path=model_path,
+    n_ctx=2048,
+    n_threads=8,
+    n_gpu_layers=0,  # 使用CPU
+    temperature=0.7,
+    max_tokens=512,
+    verbose=True
+)
+
+# 初始化向量数据库
+embeddings = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-base-zh-v1.5",
+    model_kwargs={"device": "cpu"}
+)
+loader = DirectoryLoader('./docs', glob="**/*.txt")
+documents = loader.load()
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500, chunk_overlap=50, separators=["\n\n", "\n", "。", "！", "？"]
+)
+splits = text_splitter.split_documents(documents)
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+
+embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-zh-v1.5")  # 适合CPU
+vectorstore = FAISS.from_documents(splits, embeddings)
+vectorstore.save_local("faiss_index")
+
+# 初始文档
+#documents = [
+#    "LangChain 是一个用于构建大语言模型应用的框架。",
+#    "FAISS 是一个高效的向量相似度搜索库。",
+#    "ChatGLM3-6B 是一个开源的中英双语对话模型。"
+#]
+#vectorstore = FAISS.from_texts(documents, embeddings)
+
+# 定义Prompt模板
+prompt_template = """完全基于以下上下文和你的知识，用中文回答，要求内容中所有涉及到的技术问题完全基于上下文，而你只用来组织语言：
+上下文：{context}
+问题：{question}
+答案："""
+
+QA_CHAIN_PROMPT = PromptTemplate.from_template(prompt_template)
+
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",
+    retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
+    chain_type_kwargs={"prompt": QA_CHAIN_PROMPT},
+    return_source_documents=True
+)
+
+# 文件上传接口
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+        with open(file_path, 'wb') as f:
+            content = await file.read()
+            f.write(content)
+
+        loader = DirectoryLoader(UPLOAD_FOLDER, glob="**/*.txt")
+        documents = loader.load()
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500, chunk_overlap=50,
+            separators=["\n\n", "\n", "。", "！", "？"]
+        )
+        splits = text_splitter.split_documents(documents)
+
+        vectorstore.add_documents(splits)
+        vectorstore.save_local(FAISS_INDEX_DIR)
+
+        return {"filename": file.filename, "message": "文件上传并处理成功"}
+    except Exception as e:
+        return {"message": f"文件处理失败: {str(e)}"}
+
+# 修改后的问答接口
+@app.post("/ask")
+async def ask(question: str = Form(...)):  # 使用Form接收参数
+    try:
+        result = qa_chain({"query": question})
+        return {
+            "answer": result["result"],
+            "sources": [doc.page_content for doc in result["source_documents"]]
+        }
+    except Exception as e:
+        return {"message": f"问答处理失败: {str(e)}"}
+
+# 首页
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
